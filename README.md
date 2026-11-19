@@ -9,7 +9,7 @@ il rend un MP4 monté sur le rythme, avec effets motion design.
 3. **Montage par Claude** — génère `timeline.json`, puis un validateur déterministe cale chaque coupe
    sur le beat le plus proche (≤ 120 ms), sans trou noir ni chevauchement, et répare les erreurs.
 4. **Rendu Remotion** — plans plein écran avec zoom punch, mosaïque 3x3 révélée sur les beats,
-   HUD caméra (REC, ISO, timecode), flash obturateur, titres animés.
+   HUD caméra (REC, ISO, timecode), flash obturateur ou light leak chaud, titres animés (dont titre « split »).
 
 ## Démarrer (sur un ordinateur)
 
@@ -24,5 +24,21 @@ uv run python main.py run --input ./input --brief ./brief.txt --output ./output/
 ```
 
 Test complet sans clé API (vidéos synthétiques + vrai rendu) : `uv run pytest -v`.
+
+## Styles appris depuis des montages d'exemple
+
+Le monteur peut imiter le *style* d'un montage existant : rythme des coupes (en beats), longueur de
+l'accroche, titres, transitions, étalonnage. Deux styles sont fournis :
+
+| Style | Esprit |
+|---|---|
+| `rec-japan` | ville de nuit, néons, rafale de plans d'½ à 1 beat, light leaks chauds, retour en boucle au plan d'ouverture |
+| `touch-grass` | nature lumineuse, POV en accroche longue, un plan par beat, cuts secs, fin sur un plan calme |
+
+```bash
+uv run python main.py run --input ./input --brief ./brief.txt --style rec-japan --format 16:9
+uv run python main.py learn-style --video mon_exemple.mp4 --name mon-style   # apprendre un nouveau style
+uv run python main.py styles                                                 # lister les styles
+```
 
 Architecture, commandes détaillées et conventions : voir [CLAUDE.md](CLAUDE.md).

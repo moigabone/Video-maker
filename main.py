@@ -129,9 +129,10 @@ def _print_report(timeline, report) -> None:
                   f"{report.unsnapped_cuts} non snappé(s), {len(report.fixes)} correction(s) → {ws().validation_report}")
 
 
-def _direct(brief: Path, fmt: str, fps: int, duration: Optional[float], offline: bool) -> None:
+def _direct(brief: Path, fmt: str, fps: int, duration: Optional[float], offline: bool, style: Optional[str] = None) -> None:
     from src.director import TimelineValidationError, direct
     from src.llm import LLMError
+    from src.style_learner import load_style
 
     if fmt not in ("9:16", "16:9"):
         fail("--format doit valoir 9:16 ou 16:9")
@@ -142,10 +143,17 @@ def _direct(brief: Path, fmt: str, fps: int, duration: Optional[float], offline:
     if not offline and not has_api_credentials():
         fail("ANTHROPIC_API_KEY absente : renseignez .env ou utilisez --offline pour un brouillon heuristique.")
     catalog, audio = _load_inputs()
+    profile = None
+    if style:
+        try:
+            profile = load_style(style)
+        except FileNotFoundError as e:
+            fail(str(e))
+        log(f"style : {profile.name} — {profile.summary[:120]}")
     console.rule("[bold cyan]Directeur (LLM) + validateur")
     try:
         timeline, report = direct(brief.read_text(encoding="utf-8"), catalog, audio, ws(), fmt=fmt, fps=fps,
-                                  target_duration=duration, offline=offline, log=log)
+                                  target_duration=duration, offline=offline, style=profile, log=log)
     except (LLMError, TimelineValidationError) as e:
         fail(str(e))
     _print_report(timeline, report)
@@ -159,9 +167,10 @@ def direct(
     fps: int = typer.Option(30, "--fps", help="30 ou 60"),
     duration: Optional[float] = typer.Option(None, "--duration", "-d", help="Durée cible en secondes (défaut : 30s ou longueur de la musique)"),
     offline: bool = typer.Option(False, "--offline", help="Brouillon heuristique sans appel API"),
+    style: Optional[str] = typer.Option(None, "--style", "-s", help="Style appris (nom dans styles/, voir `styles`)"),
 ) -> None:
     """Génère et valide workspace/timeline.json à partir du brief."""
-    _direct(brief, format, fps, duration, offline)
+    _direct(brief, format, fps, duration, offline, style)
 
 
 @app.command()
@@ -264,6 +273,7 @@ def run(
     lut: Optional[Path] = typer.Option(None, "--lut"),
     skip_vision: bool = typer.Option(False, "--skip-vision"),
     offline: bool = typer.Option(False, "--offline", help="Sans API : pas de VLM, brouillon heuristique"),
+    style: Optional[str] = typer.Option(None, "--style", "-s", help="Style appris (nom dans styles/)"),
 ) -> None:
     """Pipeline complet : analyze → direct → render."""
     console.print(Panel(f"vision : {vision_model()} · directeur : {director_model()} · workspace : {ws().root}", title="🎬 run"))
@@ -271,8 +281,57 @@ def run(
         _analyze(input, lut, skip_vision or offline, False, "interval", 4)
     except (FileNotFoundError, RuntimeError, ValueError) as e:
         fail(str(e))
-    _direct(brief, format, fps, duration, offline)
+    _direct(brief, format, fps, duration, offline, style)
     _render(output, quality, lut, True, None)
+
+
+# ------------------------------------------------------------------------------------- styles
+
+@app.command("learn-style")
+def learn_style_cmd(
+    video: Path = typer.Option(..., "--video", "-v", help="Montage d'exemple à analyser"),
+    name: str = typer.Option(..., "--name", "-n", help="Nom du style (fichier styles/<nom>.json)"),
+    end: Optional[float] = typer.Option(None, "--end", help="Fin utile en secondes (défaut : écran de fin détecté)"),
+    skip_vision: bool = typer.Option(False, "--skip-vision", help="Mesures seules, sans lecture par Claude"),
+) -> None:
+    """Apprend un style (rythme, coupes sur beats, look, titres, transitions) depuis un montage d'exemple."""
+    from src.llm import LLMError
+    from src.style_learner import learn_style
+
+    use_vision = not skip_vision and has_api_credentials()
+    if not skip_vision and not use_vision:
+        log("[yellow]pas de ANTHROPIC_API_KEY : mesures seules (sans lecture qualitative)[/yellow]")
+    console.rule(f"[bold cyan]Apprentissage du style « {name} »")
+    try:
+        profile = learn_style(video, name, end=end, use_vision=use_vision, log=log)
+    except (FileNotFoundError, LLMError, RuntimeError, ValueError) as e:
+        fail(str(e))
+    pc = profile.pacing
+    console.print(Panel(
+        f"{profile.summary}\n\n"
+        f"{pc.shot_count} plans en {pc.content_duration:.1f}s · plan médian {pc.median_shot_sec:.2f}s"
+        + (f" (≈ {pc.median_shot_beats:g} beat à {pc.bpm:.0f} BPM)" if pc.median_shot_beats and pc.bpm else "")
+        + (f" · {pc.cuts_on_half_beat_ratio:.0%} des coupes sur beat/demi-beat" if pc.cuts_on_half_beat_ratio is not None else "")
+        + f"\naccroche {pc.hook_shot_sec:.2f}s · {len(profile.look.flash_times)} flash(s) · chaleur {profile.look.warmth:+.3f}",
+        title=f"✓ styles/{profile.name}.json", border_style="green"))
+
+
+@app.command("styles")
+def styles_cmd() -> None:
+    """Liste les styles appris (dossier styles/)."""
+    from src.style_learner import list_styles
+
+    found = list_styles()
+    if not found:
+        console.print("Aucun style : `python main.py learn-style --video exemple.mp4 --name mon-style`")
+        return
+    table = Table(header_style="bold")
+    for col in ("nom", "plans", "plan médian", "BPM", "résumé"):
+        table.add_column(col)
+    for st in found:
+        pc = st.pacing
+        table.add_row(st.name, str(pc.shot_count), f"{pc.median_shot_sec:.2f}s", f"{pc.bpm:.0f}" if pc.bpm else "-", st.summary[:70])
+    console.print(table)
 
 
 if __name__ == "__main__":

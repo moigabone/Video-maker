@@ -263,14 +263,16 @@ class ShutterFlash(StrictModel):
     type: Literal["shutter_flash"] = "shutter_flash"
     at: float = Field(ge=0)
     frames: int = Field(default=3, ge=2, le=4)
-    color: Literal["white", "black"] = "white"
+    color: Literal["white", "black", "warm"] = Field(default="white", description="warm = light leak orangé")
 
 
 class KineticTitle(_OverlayWindow):
     type: Literal["kinetic_title"] = "kinetic_title"
     text: str = Field(min_length=1)
     subtitle: str | None = None
-    position: Literal["center", "top", "bottom", "lower_third"] = "center"
+    position: Literal["center", "top", "bottom", "lower_third", "split"] = Field(
+        default="center", description="split = mots écartés à gauche et à droite du cadre"
+    )
     animation: Literal["spring_up", "scale_in", "letter_stagger", "fade"] = "spring_up"
     style: Literal["minimal", "bold", "outline"] = "minimal"
     color: str = "#FFFFFF"
@@ -341,7 +343,7 @@ class DraftHud(StrictModel):
 
 class DraftFlash(StrictModel):
     at: float = Field(description="Instant du flash sur la timeline (s), sur un temps fort")
-    color: Literal["white", "black"]
+    color: Literal["white", "black", "warm"] = Field(description="warm = light leak orangé (transition chaude)")
     frames: int = Field(description="Durée en frames, entre 2 et 4")
 
 
@@ -350,7 +352,9 @@ class DraftTitle(StrictModel):
     end: float
     text: str = Field(description="Titre très court (<= 5 mots)")
     subtitle: str = Field(description="Sous-titre optionnel, chaîne vide si aucun")
-    position: Literal["center", "top", "bottom", "lower_third"]
+    position: Literal["center", "top", "bottom", "lower_third", "split"] = Field(
+        description="split = 2 mots écartés gauche/droite, apparition mot par mot"
+    )
     animation: Literal["spring_up", "scale_in", "letter_stagger", "fade"]
     style: Literal["minimal", "bold", "outline"]
 
@@ -364,6 +368,52 @@ class TimelineDraft(StrictModel):
     shutter_flashes: list[DraftFlash]
     titles: list[DraftTitle]
     editing_notes: str = Field(description="Résumé de la logique de montage")
+
+
+# --------------------------------------------------------------------------------------------
+# StyleProfile : style appris d'un montage d'exemple (learn-style)
+# --------------------------------------------------------------------------------------------
+
+
+class StylePacing(StrictModel):
+    content_duration: float = Field(description="Durée utile analysée (écran de fin exclu), s")
+    shot_count: int
+    shot_durations: list[float]
+    median_shot_sec: float
+    mean_shot_sec: float
+    hook_shot_sec: float = Field(description="Durée du premier plan (accroche)")
+    cuts_per_10s: float
+    bpm: float | None = None
+    median_shot_beats: float | None = Field(default=None, description="Durée médiane d'un plan, en beats")
+    cut_offset_ms: float | None = Field(default=None, description="Décalage médian coupe − beat le plus proche")
+    cuts_on_beat_ratio: float | None = Field(default=None, description="Part des coupes à ≤ 80 ms d'un beat")
+    cuts_on_half_beat_ratio: float | None = Field(default=None, description="Part à ≤ 80 ms d'un beat ou demi-beat")
+
+
+class StyleLook(StrictModel):
+    mean_luma: float = Field(description="Luminance moyenne 0-255")
+    contrast: float = Field(description="Écart-type de luminance 0-255")
+    saturation: float = Field(description="Saturation moyenne 0-1")
+    warmth: float = Field(description="(R - B) moyen / 255 : > 0 chaud, < 0 froid")
+    flash_times: list[float] = Field(default_factory=list, description="Pics de luminance (flashs, light leaks)")
+
+
+class StyleProfile(StrictModel):
+    version: Literal[1] = 1
+    name: str
+    source: str = Field(description="Montage d'exemple analysé (nom de fichier)")
+    created_at: str = Field(default_factory=utc_now)
+    format_hint: FormatLiteral | None = None
+    cut_times: list[float] = Field(default_factory=list)
+    pacing: StylePacing
+    look: StyleLook
+    summary: str = ""
+    structure: str = ""
+    title_style: str = ""
+    transitions: str = ""
+    color_grade: str = ""
+    editing_rules: list[str] = Field(default_factory=list, description="Consignes concrètes données au directeur")
+    qualitative_source: Literal["claude", "manual", "metrics"] = "metrics"
 
 
 # --------------------------------------------------------------------------------------------

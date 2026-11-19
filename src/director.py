@@ -27,6 +27,7 @@ from .schemas import (
     NineGridScene,
     ShutterFlash,
     SingleScene,
+    StyleProfile,
     Timeline,
     TimelineDraft,
     ValidationReport,
@@ -79,9 +80,11 @@ STRUCTURE RULES
      handheld moments — a few seconds, not the entire edit unless the brief asks for it. Plausible exposure
      values (aperture like "F 2.8", iso like "ISO 800", shutter like "1/1000").
    - shutter_flashes: 2-4 frames, on strong beats / downbeats at hard cuts and section changes; at most
-     one every ~2 s. White by default, black for darker moods.
+     one every ~2 s. White by default, black for darker moods, "warm" for an orange light-leak burn
+     (cinematic / travel / film looks).
    - titles: very short (<= 5 words), in the brief's language, readable (>= 1.2 s), never overlapping each
-     other; use subtitle "" when none.
+     other; use subtitle "" when none. position "split" puts a two-word title on the far left and far right
+     of the frame (word by word reveal) over the hook shot — the travel-vlog signature.
 7. duration_sec: honour the target duration given in the request (it must also fit in the music after
    audio_start_offset).
 Write intent / editing_notes briefly, in the brief's language."""
@@ -99,6 +102,7 @@ def build_director_prompt(
     fmt: str,
     fps: int,
     target_duration: float,
+    style: StyleProfile | None = None,
 ) -> str:
     clips = []
     for v in catalog.videos:
@@ -137,6 +141,10 @@ def build_director_prompt(
         )
     else:
         parts.append("## MUSIC\nNo music track: set audio_start_offset to 0 and cut on a regular 0.5 s grid.")
+    if style is not None:
+        from .style_learner import style_prompt_section
+
+        parts.append(style_prompt_section(style))
     parts.append("Return the TimelineDraft JSON.")
     return "\n\n".join(parts)
 
@@ -149,11 +157,12 @@ def generate_draft(
     fmt: str,
     fps: int,
     target_duration: float,
+    style: StyleProfile | None = None,
     client=None,
 ) -> TimelineDraft:
     from .llm import structured_call
 
-    prompt = build_director_prompt(brief, catalog, audio, fmt=fmt, fps=fps, target_duration=target_duration)
+    prompt = build_director_prompt(brief, catalog, audio, fmt=fmt, fps=fps, target_duration=target_duration, style=style)
     draft, _ = structured_call(
         model=director_model(),
         system=DIRECTOR_SYSTEM,
@@ -166,8 +175,18 @@ def generate_draft(
     return draft
 
 
-def heuristic_draft(catalog: MediaCatalog, audio: AudioAnalysis | None, *, target_duration: float, title: str = "Auto edit") -> TimelineDraft:
-    """Brouillon déterministe sans API (mode --offline) : cuts sur beats, plans triés par énergie."""
+def heuristic_draft(
+    catalog: MediaCatalog,
+    audio: AudioAnalysis | None,
+    *,
+    target_duration: float,
+    title: str = "Auto edit",
+    style: StyleProfile | None = None,
+) -> TimelineDraft:
+    """Brouillon déterministe sans API (mode --offline) : cuts sur beats, plans triés par énergie.
+
+    Avec un style : durée de plan médiane (en beats), longueur d'accroche, titre split et flash chaud.
+    """
     from .schemas import DraftClip, DraftFlash, DraftHud, DraftScene, DraftTitle
 
     if not catalog.videos:
@@ -178,6 +197,12 @@ def heuristic_draft(catalog: MediaCatalog, audio: AudioAnalysis | None, *, targe
     cuts = [0.0]
     step = 2
     i = step
+    split_title = False
+    if style is not None and style.pacing.median_shot_beats:
+        step = max(1, int(round(style.pacing.median_shot_beats)))
+        period = 60.0 / style.pacing.bpm if style.pacing.bpm else 0.5
+        i = max(1, int(round(style.pacing.hook_shot_sec / period)))
+        split_title = "split" in (style.title_style + " ".join(style.editing_rules)).lower()
     while i < len(beats) and beats[i] < duration - 0.3:
         cuts.append(beats[i])
         i += step
@@ -200,9 +225,11 @@ def heuristic_draft(catalog: MediaCatalog, audio: AudioAnalysis | None, *, targe
         audio_start_offset=0.0,
         scenes=scenes,
         camera_hud=[DraftHud(start=0.0, end=min(duration, 2.5), aperture="F 2.8", iso="ISO 800", shutter="1/1000")],
-        shutter_flashes=[DraftFlash(at=0.0, color="white", frames=3)],
-        titles=[DraftTitle(start=0.2, end=min(duration, 2.0), text=title, subtitle="", position="center", animation="spring_up", style="minimal")],
-        editing_notes="Brouillon heuristique hors-ligne (sans LLM).",
+        shutter_flashes=[DraftFlash(at=0.0, color="warm" if style else "white", frames=3)],
+        titles=[DraftTitle(start=0.2, end=min(duration, max(2.0, cuts[1] if len(cuts) > 2 else 2.0)), text=title, subtitle="",
+                           position="split" if split_title else "center", animation="spring_up",
+                           style="bold" if split_title else "minimal")],
+        editing_notes="Brouillon heuristique hors-ligne (sans LLM)" + (f", style {style.name}." if style else "."),
     )
 
 
@@ -594,6 +621,7 @@ def direct(
     fps: int = 30,
     target_duration: float | None = None,
     offline: bool = False,
+    style: StyleProfile | None = None,
     log: Log = _noop,
     client=None,
 ) -> tuple[Timeline, ValidationReport]:
@@ -603,10 +631,10 @@ def direct(
         target_duration = min(30.0, audio.duration) if audio else 15.0
     if offline:
         log("mode hors-ligne : brouillon heuristique (sans LLM)")
-        draft = heuristic_draft(catalog, audio, target_duration=target_duration)
+        draft = heuristic_draft(catalog, audio, target_duration=target_duration, style=style)
     else:
         log(f"génération de la timeline avec {director_model()}…")
-        draft = generate_draft(brief, catalog, audio, fmt=fmt, fps=fps, target_duration=target_duration, client=client)
+        draft = generate_draft(brief, catalog, audio, fmt=fmt, fps=fps, target_duration=target_duration, style=style, client=client)
     save_json(draft.model_dump(), ws.timeline_draft)
     timeline = draft_to_timeline(draft, catalog, audio, fmt=fmt, fps=fps)
     if offline:

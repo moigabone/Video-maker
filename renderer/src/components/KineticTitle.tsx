@@ -16,10 +16,70 @@ const POSITION: Record<KineticTitleData['position'], React.CSSProperties> = {
   top: {justifyContent: 'flex-start', alignItems: 'center', textAlign: 'center', paddingTop: '16%'},
   bottom: {justifyContent: 'flex-end', alignItems: 'center', textAlign: 'center', paddingBottom: '18%'},
   lower_third: {justifyContent: 'flex-end', alignItems: 'flex-start', textAlign: 'left', paddingBottom: '24%', paddingLeft: '8%'},
+  split: {},
+};
+
+/**
+ * Titre « split » : la première moitié des mots collée au bord gauche, la seconde au bord droit,
+ * à mi-hauteur haute ; apparition mot par mot (gauche puis droite), typo grasse condensée.
+ */
+const SplitTitle: React.FC<{overlay: KineticTitleData; durationInFrames: number}> = ({overlay, durationInFrames}) => {
+  const frame = useCurrentFrame();
+  const {fps, width, height} = useVideoConfig();
+  const u = unit(width, height);
+  const words = overlay.text.trim().split(/\s+/);
+  const half = Math.ceil(words.length / 2);
+  const sides = words.length > 1 ? [words.slice(0, half).join(' '), words.slice(half).join(' ')] : [words[0], ''];
+  const exitStart = Math.max(1, durationInFrames - Math.min(6, Math.floor(durationInFrames / 3)));
+  const exit = interpolate(frame, [exitStart, durationInFrames], [1, 0], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+  const stagger = Math.round(fps * 0.25);
+  const color = overlay.color || '#FFFFFF';
+  const base: React.CSSProperties = {
+    fontFamily: "'Inter Display', Inter, 'Helvetica Neue', Arial, sans-serif",
+    fontWeight: overlay.style === 'minimal' ? 500 : 900,
+    fontSize: (overlay.style === 'minimal' ? 84 : 118) * u,
+    letterSpacing: overlay.style === 'minimal' ? '0.14em' : '-0.035em',
+    textTransform: 'uppercase',
+    lineHeight: 1,
+    color: overlay.style === 'outline' ? 'transparent' : color,
+    WebkitTextStroke: overlay.style === 'outline' ? `${3 * u}px ${color}` : undefined,
+    textShadow: overlay.style === 'outline' ? undefined : `0 ${4 * u}px ${18 * u}px rgba(0,0,0,0.35)`,
+  };
+  return (
+    <AbsoluteFill style={{pointerEvents: 'none'}}>
+      {sides.map((word, i) => {
+        if (!word) return null;
+        const s = spring({frame: frame - i * stagger, fps, durationInFrames: 10, config: {damping: 16, stiffness: 260, mass: 0.5}});
+        const dir = i === 0 ? -1 : 1;
+        return (
+          <div
+            key={i}
+            style={{
+              position: 'absolute',
+              top: '41%',
+              [i === 0 ? 'left' : 'right']: `${5.5}%`,
+              transform: `translateX(${dir * (1 - s) * 40 * u}px) scale(${0.94 + 0.06 * s})`,
+              opacity: s * exit,
+              ...base,
+            }}
+          >
+            {word}
+          </div>
+        );
+      })}
+    </AbsoluteFill>
+  );
 };
 
 /** Titre minimaliste animé (spring / interpolate) avec sortie en fondu. */
 export const KineticTitle: React.FC<{overlay: KineticTitleData; durationInFrames: number}> = ({overlay, durationInFrames}) => {
+  if (overlay.position === 'split') {
+    return <SplitTitle overlay={overlay} durationInFrames={durationInFrames} />;
+  }
+  return <StackedTitle overlay={overlay} durationInFrames={durationInFrames} />;
+};
+
+const StackedTitle: React.FC<{overlay: KineticTitleData; durationInFrames: number}> = ({overlay, durationInFrames}) => {
   const frame = useCurrentFrame();
   const {fps, width, height} = useVideoConfig();
   const u = unit(width, height);

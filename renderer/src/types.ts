@@ -53,7 +53,8 @@ export type ShutterFlashData = {
   type: 'shutter_flash';
   at: number;
   frames: number;
-  color: 'white' | 'black';
+  /** warm = light leak orangé */
+  color: 'white' | 'black' | 'warm';
 };
 
 export type KineticTitleData = {
@@ -62,7 +63,8 @@ export type KineticTitleData = {
   end: number;
   text: string;
   subtitle?: string | null;
-  position: 'center' | 'top' | 'bottom' | 'lower_third';
+  /** split = mots écartés à gauche et à droite du cadre */
+  position: 'center' | 'top' | 'bottom' | 'lower_third' | 'split';
   animation: 'spring_up' | 'scale_in' | 'letter_stagger' | 'fade';
   style: 'minimal' | 'bold' | 'outline';
   color: string;

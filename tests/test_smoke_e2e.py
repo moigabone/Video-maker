@@ -30,7 +30,9 @@ from src.schemas import (
     save_json,
     save_model,
 )
-from tests.conftest import SMOKE_OUTPUT
+from tests.conftest import SMOKE_OUTPUT, TEST_WS
+
+TEST_WS_TIMELINE = TEST_WS / "timeline.json"
 
 FPS = 30
 HALF_FRAME = 0.5 / FPS + 1e-6
@@ -244,13 +246,13 @@ def _mock_timeline(catalog: MediaCatalog) -> dict:
             {"type": "camera_hud", "start": 5.5, "end": 9.0},
             {"type": "kinetic_title", "start": 0.15, "end": 1.9, "text": "SMOKE TEST", "subtitle": "AI VIDEO EDITOR",
              "position": "center", "animation": "spring_up", "style": "minimal"},
-            {"type": "kinetic_title", "start": 4.05, "end": 4.95, "text": "CLIMAX", "position": "top",
-             "animation": "scale_in", "style": "bold"},
+            {"type": "kinetic_title", "start": 4.05, "end": 4.95, "text": "BEAT SYNC", "position": "split",
+             "animation": "spring_up", "style": "bold"},
             {"type": "kinetic_title", "start": 5.05, "end": 7.2, "text": "FIN", "position": "lower_third",
              "animation": "letter_stagger", "style": "outline"},
             {"type": "shutter_flash", "at": 0.0, "frames": 3, "color": "white"},
             {"type": "shutter_flash", "at": 2.06, "frames": 2, "color": "black"},
-            {"type": "shutter_flash", "at": 4.0, "frames": 4, "color": "white"},
+            {"type": "shutter_flash", "at": 4.0, "frames": 4, "color": "warm"},
             {"type": "shutter_flash", "at": 7.5, "frames": 3, "color": "white"},                            # hors montage
         ],
     }
@@ -365,6 +367,63 @@ def test_remotion_render_smoke(ws: Workspace):
     # bordures noires de la mosaïque 3x3 : colonne au tiers de la largeur
     border_col = grid_frame[200:-200, 358:362].mean()
     assert border_col < grid_frame.mean() * 0.6, (border_col, grid_frame.mean())
+
+
+# --------------------------------------------------------------------------------------------- 7. styles
+
+def test_learn_style_on_rendered_smoke(tmp_path: Path, fake_claude):
+    """learn-style sur le MP4 du smoke test : coupes retrouvées, tempo, alignement, lecture Claude simulée."""
+    from src.style_learner import learn_style, load_style, style_prompt_section
+
+    tl = load_model(TEST_WS_TIMELINE, Timeline)
+    true_cuts = [s.start for s in tl.scenes[1:]]
+
+    def responder(body: dict) -> str:
+        assert any(b["type"] == "image" for b in body["messages"][0]["content"])
+        return json.dumps({"summary": "Test synthétique", "structure": "accroche puis cuts", "title_style": "split",
+                           "transitions": "flashs", "color_grade": "saturé", "editing_rules": ["couper sur le beat"]})
+
+    fake = fake_claude(responder)
+    profile = learn_style(SMOKE_OUTPUT, "Smoke Test!", styles_dir=tmp_path, client=fake.client)
+    assert profile.name == "smoke-test" and (tmp_path / "smoke-test.json").exists()
+    assert profile.qualitative_source == "claude" and profile.editing_rules == ["couper sur le beat"]
+    assert profile.format_hint == "9:16"
+    pc = profile.pacing
+    assert pc.content_duration == pytest.approx(tl.duration_sec, abs=0.1)  # pas d'écran de fin à exclure
+    for c in true_cuts:
+        assert min(abs(c - d) for d in profile.cut_times) <= 0.1, (c, profile.cut_times)
+    assert pc.bpm == pytest.approx(120, abs=5)
+    assert pc.cuts_on_half_beat_ratio is not None and pc.cuts_on_half_beat_ratio >= 0.5
+    assert len(profile.look.flash_times) >= 1  # le flash blanc de 0.0 s ou le light leak
+    assert load_style("smoke-test", styles_dir=tmp_path).name == "smoke-test"
+    assert "STYLE REFERENCE" in style_prompt_section(profile)
+
+
+def test_bundled_styles_and_director_with_style(ws: Workspace, tmp_path: Path):
+    import main
+    from src.director import build_director_prompt
+    from src.style_learner import STYLES_DIR, list_styles, load_style
+
+    names = {st.name for st in list_styles(STYLES_DIR)}
+    assert {"rec-japan", "touch-grass"} <= names
+    result = CliRunner().invoke(main.app, ["styles"])
+    assert result.exit_code == 0 and "rec-japan" in result.output
+
+    style = load_style("rec-japan")
+    catalog, audio = _catalog(ws), _audio(ws)
+    prompt = build_director_prompt("brief", catalog, audio, fmt="16:9", fps=FPS, target_duration=6.0, style=style)
+    assert "STYLE REFERENCE « rec-japan »" in prompt and style.editing_rules[0] in prompt
+
+    tl, _ = direct("", catalog, audio, Workspace.at(tmp_path / "ws_style"), fmt="16:9", fps=FPS,
+                   target_duration=6.0, offline=True, style=style)
+    assert_timeline_invariants(tl, catalog)
+    titles = [o for o in tl.overlays if o.type == "kinetic_title"]
+    assert titles and titles[0].position == "split"
+    assert any(o.type == "shutter_flash" and o.color == "warm" for o in tl.overlays)
+    # rythme du style (≈ 1 beat par plan) : nettement plus de plans que le brouillon par défaut (2 beats)
+    default_tl, _ = direct("", catalog, audio, Workspace.at(tmp_path / "ws_default"), fmt="16:9", fps=FPS,
+                           target_duration=6.0, offline=True)
+    assert len(tl.scenes) > len(default_tl.scenes)
 
 
 def test_browser_detection():
