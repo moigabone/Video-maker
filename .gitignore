@@ -1,0 +1,32 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Node / Remotion
+renderer/node_modules/
+renderer/out/
+renderer/public/
+renderer/.remotion/
+
+# Secrets
+.env
+
+# Médias & sorties (lourds, propres à chaque machine)
+input/videos/*
+input/audio/*
+!input/videos/.gitkeep
+!input/audio/.gitkeep
+workspace/
+output/
+tests/fixtures/
+tests/workspace/
+tests/smoke_output.mp4
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+
+.ruff_cache/
