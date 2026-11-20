@@ -25,20 +25,17 @@ uv run python main.py run --input ./input --brief ./brief.txt --output ./output/
 
 Test complet sans clé API (vidéos synthétiques + vrai rendu) : `uv run pytest -v`.
 
-## Styles appris depuis des montages d'exemple
+## Style appris depuis des montages d'exemple
 
-Le monteur peut imiter le *style* d'un montage existant : rythme des coupes (en beats), longueur de
-l'accroche, titres, transitions, étalonnage. Deux styles sont fournis :
-
-| Style | Esprit |
-|---|---|
-| `rec-japan` | ville de nuit, néons, rafale de plans d'½ à 1 beat, light leaks chauds, retour en boucle au plan d'ouverture |
-| `touch-grass` | nature lumineuse, POV en accroche longue, un plan par beat, cuts secs, fin sur un plan calme |
+Le monteur imite un *style* appris sur des montages d'exemple « dans le même délire » : rythme des coupes
+(en beats), longueur de l'accroche, titres, transitions, étalonnage. Le style **`cinematic-travel`** regroupe
+tous les exemples fournis : travel edit 16:9 au grand-angle, accroche avec titre en deux mots écartés
+(« REC | JAPAN »), puis un plan par beat, des light leaks chauds et une fin calme ou en boucle.
 
 ```bash
-uv run python main.py run --input ./input --brief ./brief.txt --style rec-japan --format 16:9
-uv run python main.py learn-style --video mon_exemple.mp4 --name mon-style   # apprendre un nouveau style
-uv run python main.py styles                                                 # lister les styles
+uv run python main.py run --input ./input --brief ./brief.txt --style cinematic-travel --format 16:9
+uv run python main.py learn-style --name cinematic-travel --video nouvel_exemple.mp4   # enrichir le style
+uv run python main.py styles                                                          # lister les styles
 ```
 
 Architecture, commandes détaillées et conventions : voir [CLAUDE.md](CLAUDE.md).

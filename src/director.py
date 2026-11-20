@@ -202,7 +202,7 @@ def heuristic_draft(
         step = max(1, int(round(style.pacing.median_shot_beats)))
         period = 60.0 / style.pacing.bpm if style.pacing.bpm else 0.5
         i = max(1, int(round(style.pacing.hook_shot_sec / period)))
-        split_title = "split" in (style.title_style + " ".join(style.editing_rules)).lower()
+        split_title = "split" in (style.reading.title_style + " ".join(style.reading.editing_rules)).lower()
     while i < len(beats) and beats[i] < duration - 0.3:
         cuts.append(beats[i])
         i += step

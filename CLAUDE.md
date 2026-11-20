@@ -11,12 +11,12 @@ uv sync                                   # deps Python (.venv)
 (cd renderer && npm install)              # deps Remotion
 
 uv run python main.py analyze --input ./input [--lut ./luts/dlogm.cube] [--skip-vision] [--force-vision]
-uv run python main.py direct  --brief ./brief.txt --format 9:16 [--fps 30] [--duration 30] [--offline] [--style rec-japan]
+uv run python main.py direct  --brief ./brief.txt --format 9:16 [--fps 30] [--duration 30] [--offline] [--style cinematic-travel]
 uv run python main.py validate                       # re-valide workspace/timeline.json
 uv run python main.py preview                        # Remotion Studio sur la timeline courante (proxies)
 uv run python main.py render  --quality high --output ./output/final.mp4 [--no-conform]
-uv run python main.py run     --input ./input --brief ./brief.txt --output ./output/final.mp4 [--style touch-grass]
-uv run python main.py learn-style --video exemple.mp4 --name mon-style [--end 14.5] [--skip-vision]
+uv run python main.py run     --input ./input --brief ./brief.txt --output ./output/final.mp4 [--style cinematic-travel]
+uv run python main.py learn-style --name cinematic-travel --video a.mp4 [--video b.mp4 …] [--replace] [--skip-vision]  # crée ou complète un style
 uv run python main.py styles                         # liste les styles appris (styles/*.json)
 
 uv run pytest -v                                     # smoke test e2e (sans clé API, ~1 min, rendu Remotion réel → tests/smoke_output.mp4)
@@ -37,14 +37,14 @@ src/audio_analyzer.py   librosa → workspace/audio_analysis.json
 src/video_indexer.py    keyframes (intervalle 1–1.5s ou scenedetect) → planche contact → Claude Vision → cache SHA-256
 src/llm.py              client Anthropic + appel structuré (stream, output_config.format, fallbacks serveur)
 src/director.py         brief + catalogue + audio → TimelineDraft (LLM) → Timeline → validate_timeline()
-src/style_learner.py    montage d'exemple → StyleProfile (coupes, BPM, alignement beats, look, lecture Claude) → styles/
+src/style_learner.py    montages d'exemple → StyleProfile agrégé (coupes, BPM, beats, look, lectures Claude + synthèse) → styles/
 src/render.py           conform des originaux (+LUT) / proxies → render_public (hard links) + render_props.json → node
 renderer/               projet Remotion 4 (TS + React 19)
   src/Root.tsx            <Composition id="Main"> + calculateMetadata (format/fps/durée depuis les props)
   src/MainComposition.tsx scènes + <Audio> (audio_start_offset) + calques d'overlays
   src/components/         SingleClip, NineGridScene, CameraHudOverlay, ShutterFlash, KineticTitle
   scripts/render.mjs      bundle + selectComposition + renderMedia (h264/aac), progression JSON sur stdout
-styles/                 styles appris versionnés (rec-japan, touch-grass : exemples fournis par l'utilisateur)
+styles/                 styles appris versionnés (cinematic-travel : style unique de l'utilisateur, complété au fil des exemples)
 tests/test_smoke_e2e.py fixtures ffmpeg → ingest → audio → validateur (mock) → rendu Remotion → ffprobe → learn-style
 ```
 
@@ -70,10 +70,10 @@ tests/test_smoke_e2e.py fixtures ffmpeg → ingest → audio → validateur (moc
   Invariant : `out_sec - in_sec == (end - start) * speed`.
 - `overlays` : `camera_hud` | `shutter_flash` (`at`, `frames` 2–4, `color` white|black|warm = light leak) |
   `kinetic_title` (`position` center|top|bottom|lower_third|split = deux mots écartés gauche/droite).
-- `StyleProfile` (styles/*.json) : `pacing` (plans, plan médian en s et en beats, accroche, % de coupes sur
-  beat/demi-beat), `look` (luminance, contraste, saturation, chaleur, flashs), lecture qualitative
-  (`summary`, `structure`, `title_style`, `transitions`, `color_grade`, `editing_rules`) injectée dans le
-  prompt du directeur via `--style` (section « STYLE REFERENCE »). `qualitative_source` : claude|manual|metrics.
+- `StyleProfile` v2 (styles/*.json) : un style = plusieurs `examples` (`StyleExample` : sha256, coupes,
+  `pacing`, `look`, `reading` propres à chaque montage) + agrégats `pacing`/`look` + `reading` de synthèse
+  (`summary`, `structure`, `title_style`, `transitions`, `color_grade`, `editing_rules`, `source`
+  claude|manual|metrics) injectée dans le prompt du directeur via `--style` (section « STYLE REFERENCE »).
 - `TimelineDraft` : projection *plate* de Timeline envoyée au LLM (tous champs requis, aucune union) pour
   rester dans les limites des Structured Outputs ; convertie par `draft_to_timeline()`.
 
@@ -102,7 +102,11 @@ tests/test_smoke_e2e.py fixtures ffmpeg → ingest → audio → validateur (moc
 - Ne jamais versionner les vidéos d'exemple (droits d'auteur, taille) : seules les fiches `styles/*.json` le sont.
 - `learn-style` exclut automatiquement l'écran de fin TikTok/Reels (frames finales sombres et fixes) ; `--end` force la fin utile.
 - Un style reproduit un *esprit* (rythme, titres, transitions, structure), jamais le contenu du montage source.
-- Les fiches `rec-japan` et `touch-grass` ont des mesures automatiques et une lecture qualitative rédigée à la main (`manual`).
+- L'utilisateur veut UN style unique (`cinematic-travel`) qui regroupe tous ses exemples : ajouter les nouveaux
+  montages avec `learn-style --name cinematic-travel --video …` (doublons ignorés par SHA-256), ne pas créer un style par vidéo.
+- Avec clé API : lecture Claude Vision par exemple + synthèse de tous les exemples. Sans clé : mesures seules,
+  la lecture de synthèse existante (`manual`/`claude`) est conservée.
+- Lectures actuelles de `cinematic-travel` rédigées à la main (`manual`) d'après les 2 premiers exemples.
 
 ## Pièges connus
 

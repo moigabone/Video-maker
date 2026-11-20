@@ -372,31 +372,49 @@ def test_remotion_render_smoke(ws: Workspace):
 # --------------------------------------------------------------------------------------------- 7. styles
 
 def test_learn_style_on_rendered_smoke(tmp_path: Path, fake_claude):
-    """learn-style sur le MP4 du smoke test : coupes retrouvées, tempo, alignement, lecture Claude simulée."""
+    """learn-style : un style agrège plusieurs exemples, ajoutables au fil du temps (Claude simulé)."""
     from src.style_learner import learn_style, load_style, style_prompt_section
 
     tl = load_model(TEST_WS_TIMELINE, Timeline)
     true_cuts = [s.start for s in tl.scenes[1:]]
+    calls = {"vision": 0, "synthesis": 0}
 
     def responder(body: dict) -> str:
-        assert any(b["type"] == "image" for b in body["messages"][0]["content"])
-        return json.dumps({"summary": "Test synthétique", "structure": "accroche puis cuts", "title_style": "split",
-                           "transitions": "flashs", "color_grade": "saturé", "editing_rules": ["couper sur le beat"]})
+        has_image = any(b["type"] == "image" for b in body["messages"][0]["content"])
+        calls["vision" if has_image else "synthesis"] += 1
+        tag = "exemple" if has_image else "synthèse"
+        return json.dumps({"summary": f"lecture {tag}", "structure": "accroche puis cuts", "title_style": "split",
+                           "transitions": "flashs", "color_grade": "saturé", "editing_rules": [f"règle {tag}"]})
 
     fake = fake_claude(responder)
     profile = learn_style(SMOKE_OUTPUT, "Smoke Test!", styles_dir=tmp_path, client=fake.client)
     assert profile.name == "smoke-test" and (tmp_path / "smoke-test.json").exists()
-    assert profile.qualitative_source == "claude" and profile.editing_rules == ["couper sur le beat"]
-    assert profile.format_hint == "9:16"
-    pc = profile.pacing
-    assert pc.content_duration == pytest.approx(tl.duration_sec, abs=0.1)  # pas d'écran de fin à exclure
+    assert calls == {"vision": 1, "synthesis": 0} and len(profile.examples) == 1
+    ex = profile.examples[0]
+    assert ex.reading.source == "claude" and profile.reading.editing_rules == ["règle exemple"]
+    assert ex.format_hint == profile.format_hint == "9:16"
+    assert ex.pacing.content_duration == pytest.approx(tl.duration_sec, abs=0.1)  # pas d'écran de fin à exclure
     for c in true_cuts:
-        assert min(abs(c - d) for d in profile.cut_times) <= 0.1, (c, profile.cut_times)
-    assert pc.bpm == pytest.approx(120, abs=5)
-    assert pc.cuts_on_half_beat_ratio is not None and pc.cuts_on_half_beat_ratio >= 0.5
-    assert len(profile.look.flash_times) >= 1  # le flash blanc de 0.0 s ou le light leak
-    assert load_style("smoke-test", styles_dir=tmp_path).name == "smoke-test"
-    assert "STYLE REFERENCE" in style_prompt_section(profile)
+        assert min(abs(c - d) for d in ex.cut_times) <= 0.1, (c, ex.cut_times)
+    assert ex.pacing.bpm == pytest.approx(120, abs=5)
+    assert ex.pacing.cuts_on_half_beat_ratio is not None and ex.pacing.cuts_on_half_beat_ratio >= 0.5
+    assert ex.look.flash_times
+
+    # Deuxième exemple « dans le même délire » ajouté plus tard → agrégat + synthèse
+    second = tmp_path / "second.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(SMOKE_OUTPUT), "-t", "4", "-c:v", "libx264",
+                    "-c:a", "aac", str(second)], check=True)
+    profile = learn_style([second, SMOKE_OUTPUT], "smoke-test", styles_dir=tmp_path, client=fake.client)
+    assert len(profile.examples) == 2  # la vidéo déjà connue est ignorée (même SHA-256)
+    assert calls == {"vision": 2, "synthesis": 1}
+    assert profile.reading.editing_rules == ["règle synthèse"]
+    assert profile.pacing.shot_count == sum(e.pacing.shot_count for e in profile.examples)
+    assert profile.pacing.content_duration == pytest.approx(sum(e.pacing.content_duration for e in profile.examples))
+
+    reloaded = load_style("smoke-test", styles_dir=tmp_path)
+    assert len(reloaded.examples) == 2
+    section = style_prompt_section(reloaded)
+    assert "STYLE REFERENCE" in section and "2 example edit(s)" in section
 
 
 def test_bundled_styles_and_director_with_style(ws: Workspace, tmp_path: Path):
@@ -405,14 +423,15 @@ def test_bundled_styles_and_director_with_style(ws: Workspace, tmp_path: Path):
     from src.style_learner import STYLES_DIR, list_styles, load_style
 
     names = {st.name for st in list_styles(STYLES_DIR)}
-    assert {"rec-japan", "touch-grass"} <= names
+    assert "cinematic-travel" in names
     result = CliRunner().invoke(main.app, ["styles"])
-    assert result.exit_code == 0 and "rec-japan" in result.output
+    assert result.exit_code == 0 and "cinematic-travel" in result.output
 
-    style = load_style("rec-japan")
+    style = load_style("cinematic-travel")
+    assert len(style.examples) >= 2 and style.reading.source in ("manual", "claude")
     catalog, audio = _catalog(ws), _audio(ws)
     prompt = build_director_prompt("brief", catalog, audio, fmt="16:9", fps=FPS, target_duration=6.0, style=style)
-    assert "STYLE REFERENCE « rec-japan »" in prompt and style.editing_rules[0] in prompt
+    assert "STYLE REFERENCE « cinematic-travel »" in prompt and style.reading.editing_rules[0] in prompt
 
     tl, _ = direct("", catalog, audio, Workspace.at(tmp_path / "ws_style"), fmt="16:9", fps=FPS,
                    target_duration=6.0, offline=True, style=style)

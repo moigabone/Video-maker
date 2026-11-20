@@ -395,25 +395,47 @@ class StyleLook(StrictModel):
     contrast: float = Field(description="Écart-type de luminance 0-255")
     saturation: float = Field(description="Saturation moyenne 0-1")
     warmth: float = Field(description="(R - B) moyen / 255 : > 0 chaud, < 0 froid")
-    flash_times: list[float] = Field(default_factory=list, description="Pics de luminance (flashs, light leaks)")
+    flashes_per_10s: float = Field(default=0.0, description="Fréquence des flashs / light leaks")
+    flash_times: list[float] = Field(default_factory=list, description="Pics de luminance (par exemple uniquement)")
 
 
-class StyleProfile(StrictModel):
-    version: Literal[1] = 1
-    name: str
-    source: str = Field(description="Montage d'exemple analysé (nom de fichier)")
-    created_at: str = Field(default_factory=utc_now)
-    format_hint: FormatLiteral | None = None
-    cut_times: list[float] = Field(default_factory=list)
-    pacing: StylePacing
-    look: StyleLook
+class StyleReading(StrictModel):
+    """Lecture qualitative d'un style (Claude Vision, rédigée à la main, ou déduite des mesures)."""
+
     summary: str = ""
     structure: str = ""
     title_style: str = ""
     transitions: str = ""
     color_grade: str = ""
     editing_rules: list[str] = Field(default_factory=list, description="Consignes concrètes données au directeur")
-    qualitative_source: Literal["claude", "manual", "metrics"] = "metrics"
+    source: Literal["claude", "manual", "metrics"] = "metrics"
+
+
+class StyleExample(StrictModel):
+    """Mesures d'UN montage d'exemple (la vidéo elle-même n'est jamais versionnée)."""
+
+    source: str = Field(description="Description ou nom du montage d'exemple")
+    sha256: str
+    added_at: str = Field(default_factory=utc_now)
+    format_hint: FormatLiteral | None = None
+    cut_times: list[float] = Field(default_factory=list)
+    pacing: StylePacing
+    look: StyleLook
+    reading: StyleReading = Field(default_factory=StyleReading)
+
+
+class StyleProfile(StrictModel):
+    """Un style = l'agrégat de un ou plusieurs montages d'exemple « dans le même délire »."""
+
+    version: Literal[2] = 2
+    name: str
+    created_at: str = Field(default_factory=utc_now)
+    updated_at: str = Field(default_factory=utc_now)
+    format_hint: FormatLiteral | None = None
+    examples: list[StyleExample] = Field(min_length=1)
+    pacing: StylePacing = Field(description="Rythme agrégé sur tous les exemples")
+    look: StyleLook = Field(description="Look agrégé (moyenne pondérée par la durée)")
+    reading: StyleReading = Field(description="Lecture de synthèse du style, donnée au directeur")
 
 
 # --------------------------------------------------------------------------------------------

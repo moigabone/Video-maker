@@ -149,7 +149,7 @@ def _direct(brief: Path, fmt: str, fps: int, duration: Optional[float], offline:
             profile = load_style(style)
         except FileNotFoundError as e:
             fail(str(e))
-        log(f"style : {profile.name} — {profile.summary[:120]}")
+        log(f"style : {profile.name} ({len(profile.examples)} exemple(s)) — {profile.reading.summary[:120]}")
     console.rule("[bold cyan]Directeur (LLM) + validateur")
     try:
         timeline, report = direct(brief.read_text(encoding="utf-8"), catalog, audio, ws(), fmt=fmt, fps=fps,
@@ -289,12 +289,13 @@ def run(
 
 @app.command("learn-style")
 def learn_style_cmd(
-    video: Path = typer.Option(..., "--video", "-v", help="Montage d'exemple à analyser"),
-    name: str = typer.Option(..., "--name", "-n", help="Nom du style (fichier styles/<nom>.json)"),
-    end: Optional[float] = typer.Option(None, "--end", help="Fin utile en secondes (défaut : écran de fin détecté)"),
+    video: list[Path] = typer.Option(..., "--video", "-v", help="Montage(s) d'exemple (option répétable)"),
+    name: str = typer.Option(..., "--name", "-n", help="Nom du style (fichier styles/<nom>.json) ; créé ou complété"),
+    end: Optional[float] = typer.Option(None, "--end", help="Fin utile en secondes, une seule vidéo (défaut : écran de fin détecté)"),
     skip_vision: bool = typer.Option(False, "--skip-vision", help="Mesures seules, sans lecture par Claude"),
+    replace: bool = typer.Option(False, "--replace", help="Repartir de zéro au lieu d'ajouter au style existant"),
 ) -> None:
-    """Apprend un style (rythme, coupes sur beats, look, titres, transitions) depuis un montage d'exemple."""
+    """Crée ou complète un style à partir d'un ou plusieurs montages d'exemple « dans le même délire »."""
     from src.llm import LLMError
     from src.style_learner import learn_style
 
@@ -303,16 +304,16 @@ def learn_style_cmd(
         log("[yellow]pas de ANTHROPIC_API_KEY : mesures seules (sans lecture qualitative)[/yellow]")
     console.rule(f"[bold cyan]Apprentissage du style « {name} »")
     try:
-        profile = learn_style(video, name, end=end, use_vision=use_vision, log=log)
+        profile = learn_style(video, name, end=end, use_vision=use_vision, replace=replace, log=log)
     except (FileNotFoundError, LLMError, RuntimeError, ValueError) as e:
         fail(str(e))
     pc = profile.pacing
     console.print(Panel(
-        f"{profile.summary}\n\n"
-        f"{pc.shot_count} plans en {pc.content_duration:.1f}s · plan médian {pc.median_shot_sec:.2f}s"
+        f"{profile.reading.summary}\n\n"
+        f"{len(profile.examples)} exemple(s) · {pc.shot_count} plans en {pc.content_duration:.1f}s · plan médian {pc.median_shot_sec:.2f}s"
         + (f" (≈ {pc.median_shot_beats:g} beat à {pc.bpm:.0f} BPM)" if pc.median_shot_beats and pc.bpm else "")
         + (f" · {pc.cuts_on_half_beat_ratio:.0%} des coupes sur beat/demi-beat" if pc.cuts_on_half_beat_ratio is not None else "")
-        + f"\naccroche {pc.hook_shot_sec:.2f}s · {len(profile.look.flash_times)} flash(s) · chaleur {profile.look.warmth:+.3f}",
+        + f"\naccroche {pc.hook_shot_sec:.2f}s · {profile.look.flashes_per_10s:g} flash(s)/10s · chaleur {profile.look.warmth:+.3f}",
         title=f"✓ styles/{profile.name}.json", border_style="green"))
 
 
@@ -326,11 +327,11 @@ def styles_cmd() -> None:
         console.print("Aucun style : `python main.py learn-style --video exemple.mp4 --name mon-style`")
         return
     table = Table(header_style="bold")
-    for col in ("nom", "plans", "plan médian", "BPM", "résumé"):
+    for col in ("nom", "exemples", "plan médian", "BPM", "résumé"):
         table.add_column(col)
     for st in found:
         pc = st.pacing
-        table.add_row(st.name, str(pc.shot_count), f"{pc.median_shot_sec:.2f}s", f"{pc.bpm:.0f}" if pc.bpm else "-", st.summary[:70])
+        table.add_row(st.name, str(len(st.examples)), f"{pc.median_shot_sec:.2f}s", f"{pc.bpm:.0f}" if pc.bpm else "-", st.reading.summary[:70])
     console.print(table)
 
 
